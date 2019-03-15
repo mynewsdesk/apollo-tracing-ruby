@@ -1,5 +1,7 @@
 # Apollo Tracing
 
+TODO: UPDATE ME!!!!
+
 [![Build Status](https://travis-ci.org/uniiverse/apollo-tracing-ruby.svg?branch=master)](https://travis-ci.org/uniiverse/apollo-tracing-ruby)
 [![Latest Version](https://img.shields.io/gem/v/apollo-tracing.svg)](https://rubygems.org/gems/apollo-tracing)
 
@@ -157,101 +159,27 @@ Now your response should look something like:
 }
 ```
 
-### Engine Proxy
-
-Now you can start using the [Apollo Engine](https://www.apollographql.com/engine/) service.
-Here is the general architecture overview of a sidecar mode – Proxy runs next to your application server:
-
-```
- -----------------    request     -----------------    request     -----------------
-|                 | -----------> |                 | -----------> |                 |
-|     Client      |              |  Engine Proxy   |              |   Application   |
-|                 | <----------- |                 | <----------- |                 |
- -----------------    response    -----------------    response    -----------------
-                                          |
-                                          |
-                          GraphQL tracing | from response
-                                          |
-                                          ˅
-                                  -----------------
-                                 |                 |
-                                 |  Apollo Engine  |
-                                 |                 |
-                                  -----------------
-```
-
-`ApolloTracing` gem comes with the [Apollo Engine Proxy](https://www.apollographql.com/docs/engine/index.html#engine-proxy) binary written in Go.
-To configure the Proxy create a Proxy config file:
-
-```
-# config/apollo-engine-proxy.json
-
-{
-  "apiKey": "service:YOUR_ENGINE_API_KEY",
-  "logging": { "level": "INFO" },
-  "origins": [{
-    "http": { "url": "http://localhost:3000/graphql" }
-  }],
-  "frontends": [{
-    "host": "localhost", "port": 3001, "endpoints": ["/graphql"]
-  }]
-}
-```
-
-* `apiKey` – get this on your [Apollo Engine](https://engine.apollographql.com/) home page.
-* `logging.level` – a log level for the Proxy ("INFO", "DEBUG" or "ERROR").
-* `origins` – a list of URLs with your GraphQL endpoints in the Application.
-* `frontends` – an address on which the Proxy will be listening.
-
-To run the Proxy as a child process, which will be automatically terminated if the Application proccess stoped, add the following line to the `config.ru` file:
-
-<pre>
-# config.ru – this file is used by Rack-based servers to start the application
-require File.expand_path('../config/environment',  __FILE__)
-
-<b>ApolloTracing.start_proxy('config/apollo-engine-proxy.json')</b>
-# or pass a JSON string:
-# ApolloTracing.start_proxy('{"apiKey": "KEY", ...}')
-
-run Your::Application
-</pre>
-
-For example, if you use [rails](https://github.com/rails/rails) with [puma](https://github.com/puma/puma) application server and run it like:
-
-```
-bundle exec puma -w 2 -t 16 -p 3000
-```
-
-The proccess tree may look like:
-
-```
-                ---------------
-               |  Puma Master  |
-               |   Port 3000   |
-                ---------------
-                   |      |
-         ----------        ----------
-        |                            |    ----------------
-        ˅                             -> |  Puma Worker1  |
- ----------------                    |    -----------------
-|  Engine Proxy  |                   |    ----------------
-|   Port 3001    |                    -> |  Puma Worker2  |
- ----------------                         ----------------
-```
-
-Now you can send requests to the reverse Proxy `http://localhost:3001`.
-It'll proxy any (GraphQL and non-GraphQL) requests to the Application `http://localhost:3000`.
-If the request matches the endpoints described in `origins`, it'll strip the `tracing` data from the response and will send it to the Apollo Engine service.
-
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. 
+You can also run `bin/console` for an interactive prompt that will allow you to experiment.
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, 
+update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a 
+git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+
+Integration Testing Notes (we shouldn't actually do this when the gem becomes real!):
+1. Create a new service at https://engine.apollographql.com/service.
+1. Set the `ENGINE_API_KEY` environment variable to your Apollo API KEY.
+1. Dump the test schema by running `rake generate_schema file=tmp/test.graphql`.
+1. Upload the test schema to Apollo by running `apollo service:push --localSchemaFile=tmp/test.graphql`
+1. Run the one test `rspec`
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/uniiverse/apollo-tracing-ruby. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [Contributor Covenant](http://contributor-covenant.org) code of conduct.
+Bug reports and pull requests are welcome on GitHub at https://github.com/uniiverse/apollo-tracing-ruby. 
+This project is intended to be a safe, welcoming space for collaboration, and contributors are expected 
+to adhere to the [Contributor Covenant](http://contributor-covenant.org) code of conduct.
 
 ## License
 

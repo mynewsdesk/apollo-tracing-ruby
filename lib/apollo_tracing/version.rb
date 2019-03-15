@@ -1,5 +1,5 @@
 # frozen_string_literal: true
 
-class ApolloTracing
-  VERSION = "1.6.0"
+module ApolloTracing
+  VERSION = '2.0.0'
 end

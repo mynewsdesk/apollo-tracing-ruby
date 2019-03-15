@@ -1,0 +1,23 @@
+inherit_gem:
+  salsify_rubocop: conf/rubocop.yml
+
+require: rubocop-rspec
+
+AllCops:
+  TargetRubyVersion: 2.4
+  Exclude:
+  - 'vendor/**/*'
+  - 'gemfiles/vendor/**/*'
+  - 'lib/apollo_tracing/api/**/*'
+
+Style/FrozenStringLiteralComment:
+  Enabled: true
+
+Metrics/LineLength:
+  Enabled: true
+  Max: 120
+  IgnoreCopDirectives: true
+
+Naming/FileName:
+  Exclude:
+  - 'lib/apollo-tracing.rb'

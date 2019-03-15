@@ -1,5 +1,7 @@
-sudo: false
 language: ruby
 rvm:
-  - 2.3.4
-script: make download_binaries && bundle exec rspec
+  - 2.4.5
+before_install: gem install bundler -v 2.0.1
+script:
+  - bundle exec rubocop
+  - bundle exec rspec
