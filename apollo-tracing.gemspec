@@ -23,10 +23,11 @@ Gem::Specification.new do |spec|
 
   spec.add_runtime_dependency 'google-protobuf'
   spec.add_runtime_dependency 'graphql', '>= 1.9', '< 2'
-  # TODO: Just use Net::HTTP so we can remove this dependency
+  # TODO: Just use Net::HTTP so we can remove this dependency?
   spec.add_runtime_dependency 'rest-client'
 
   spec.add_development_dependency 'bundler', '~> 2.0'
+  spec.add_development_dependency 'dotenv'
   spec.add_development_dependency 'json_spec'
   spec.add_development_dependency 'rake', '~> 12.0'
   spec.add_development_dependency 'rspec', '~> 3.8'

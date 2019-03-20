@@ -3,7 +3,7 @@
 describe ApolloTracing do
   specify do
     query = <<~GRAPHQL
-      query($userId: Int!) {
+      query doSomethingUseful($userId: Int!) {
         user(id: $userId) {
           id
           name

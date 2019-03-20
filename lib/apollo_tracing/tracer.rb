@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'rest-client'
 require 'zlib'
 
@@ -8,18 +9,27 @@ require_relative 'trace_tree'
 
 module ApolloTracing
   class Tracer
-    attr_reader :compress, :api_key
+    attr_reader :compress, :api_key, :schema_tag, :schema_hash, :trace_prepare, :query_signature,
+                :service_name, :service_version
 
-    def initialize(compress:, api_key:)
+    def initialize(compress: true, api_key: nil, schema_tag: nil, schema_hash: nil,
+                   service_version: nil, trace_prepare: nil, query_signature: nil)
       @compress = compress
-      @api_key = api_key
-    end
-
-    def enabled?
-      !@api_key.nil?
+      @api_key = api_key || ENV['ENGINE_API_KEY']
+      @schema_tag = schema_tag || ENV.fetch('ENGINE_SCHEMA_TAG', 'current')
+      @schema_hash = schema_hash
+      @service_name = api_key.split(':')[1] unless api_key.nil?
+      @service_version = service_version
+      @trace_prepare = trace_prepare || Proc.new {}
+      @query_signature = query_signature || Proc.new do |query|
+        # TODO: This should be smarter
+        query.query_string
+      end
     end
 
     def trace(key, data)
+      # TODO: Handle lazy field resolution
+
       if key == 'execute_query'
         query = data.fetch(:query)
         trace = ApolloTracing::API::Trace.new(start_time: to_proto_timestamp(Time.now.utc))
@@ -37,32 +47,36 @@ module ApolloTracing
         trace.duration_ns = end_time_nanos - start_time_nanos
         trace.end_time = to_proto_timestamp(Time.now.utc)
         trace.root = trace_tree.root
-        # TODO: Fill out Trace::Details, Trace::HTTP, signature, client*
 
-        # TODO: Fill these out properly and batch them
+        # TODO: Fill out Trace::Details? Requires removing sensitive data
+
+        # Give consumers a chance to fill out additional details in the trace
+        # like Trace::HTTP and client*
+        trace_prepare.call(trace, query)
+
+        # TODO: Batch queries
         trace_report = ApolloTracing::API::FullTracesReport.new(
           header: ApolloTracing::API::ReportHeader.new(
-            hostname: Socket.gethostname,
-            agent_version: 'ruby-tracer',
-            schema_tag: 'current'
-            # service: 'foobar'
-            # service_version: 'current-4279-20160804T065423Z-5-g3cf0aa8',
-            # runtime_version: 'Ruby 2.6.2',
-            # uname: 'TBD',
-            # schema_hash: '9f665a0e61b8d3a21449970d87fc7037bc2b97a9'
+            hostname: hostname,
+            uname: uname,
+            agent_version: agent_version,
+            service: service_name,
+            service_version: service_version,
+            schema_tag: schema_tag,
+            schema_hash: schema_hash,
+            runtime_version: RUBY_DESCRIPTION
           )
         )
-        # TODO: Normalize queries for appropriate signatures
-        trace_report.traces_per_query["#{query.operation_name}\\#{query.query_string}"] =
+        trace_report.traces_per_query["# #{query.operation_name || 'unnamed'}\n#{query_signature.call(query)}"] =
           ApolloTracing::API::Traces.new(trace: [trace])
 
-        puts JSON.pretty_generate(JSON.parse(trace_report.to_json))
+        puts "Generated Report:\n#{JSON.pretty_generate(JSON.parse(trace_report.to_json))}"
 
-        # TODO: Background this or use async i/o
+        # TODO: Background this (or use async i/o), handle retries, etc.
         send_report(trace_report)
       elsif key == 'execute_field'
-        # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed to the
-        # interpreter
+        # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed when
+        # using the interpreter runtime
         start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
         result = yield
         end_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
@@ -70,7 +84,6 @@ module ApolloTracing
         # TODO: Handle errors
         context = data.fetch(:context)
         context.fetch(:apollo_tracing).fetch(:tree).add(
-          # TODO: Statically compute some of this?
           path: context.path,
           parent_type: context.parent_type,
           field: context.field,
@@ -86,10 +99,24 @@ module ApolloTracing
 
     private
 
-    # TODO: Remove me
-    RestClient.log = Logger.new(STDOUT)
+    def hostname
+      @hostname ||= Socket.gethostname
+    end
+
+    def agent_version
+      @agent_version ||= "apollo-tracing-tracing #{ApolloTracing::VERSION}"
+    end
+
+    def uname
+      @uname ||= `uname -a`
+    end
 
     def send_report(report)
+      if api_key.nil?
+        puts 'Apollo API key not set'
+        return
+      end
+
       body = compress ? gzip(report.class.encode(report)) : report.class.encode(report)
       headers = {
         'X-Api-Key' => api_key,

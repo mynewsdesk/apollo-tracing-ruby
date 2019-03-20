@@ -83,5 +83,5 @@ end
 
 class TestSchema < GraphQL::Schema
   query QueryType
-  use ApolloTracing
+  use ApolloTracing, schema_hash: 'e51485'
 end
