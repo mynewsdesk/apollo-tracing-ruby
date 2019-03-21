@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+# TODO: Need to actually add testing
 describe ApolloTracing do
   specify do
     query = <<~GRAPHQL

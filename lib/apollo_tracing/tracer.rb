@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'concurrent-ruby'
 require 'digest'
 require 'rest-client'
 require 'zlib'
@@ -10,21 +11,61 @@ require_relative 'trace_tree'
 module ApolloTracing
   class Tracer
     attr_reader :compress, :api_key, :schema_tag, :schema_hash, :trace_prepare, :query_signature,
-                :service_name, :service_version
+                :service_name, :service_version, :reporting_interval, :max_uncompressed_report_size, :debug_reports
+    alias_method :debug_reports?, :debug_reports
 
     def initialize(compress: true, api_key: nil, schema_tag: nil, schema_hash: nil,
-                   service_version: nil, trace_prepare: nil, query_signature: nil)
+                   service_version: nil, trace_prepare: nil, query_signature: nil,
+                   reporting_interval: nil, max_uncompressed_report_size: nil, debug_reports: nil)
       @compress = compress
-      @api_key = api_key || ENV['ENGINE_API_KEY']
+      @api_key = api_key || ENV.fetch('ENGINE_API_KEY')
       @schema_tag = schema_tag || ENV.fetch('ENGINE_SCHEMA_TAG', 'current')
       @schema_hash = schema_hash
       @service_name = api_key.split(':')[1] unless api_key.nil?
       @service_version = service_version
+      @reporting_interval = reporting_interval || 5
+      @max_uncompressed_report_size = max_uncompressed_report_size || 4 * 1024 * 1024
+      @debug_reports = debug_reports.nil? ? false : debug_reports
       @trace_prepare = trace_prepare || Proc.new {}
       @query_signature = query_signature || Proc.new do |query|
         # TODO: This should be smarter
         query.query_string
       end
+
+      @report_header = ApolloTracing::API::ReportHeader.new(
+        hostname: hostname,
+        uname: uname,
+        agent_version: agent_version,
+        service: service_name,
+        service_version: service_version,
+        schema_tag: schema_tag,
+        schema_hash: schema_hash,
+        runtime_version: RUBY_DESCRIPTION
+      )
+
+      @shutdown_latch = Concurrent::CountDownLatch.new(1)
+      @trace_queue = Queue.new
+    end
+
+    def start_uploader
+      @uploader_thread = Thread.new do
+        run_uploader
+      end
+    end
+
+    def synchronize_uploads
+      until @trace_queue.empty?
+        break unless @uploader_thread && @uploader_thread.alive?
+
+        sleep(0.1)
+      end
+    end
+
+    def shutdown_uploader
+      return unless @uploader_thread
+
+      @shutdown_latch.count_down
+      @uploader_thread.join
     end
 
     def trace(key, data)
@@ -54,26 +95,8 @@ module ApolloTracing
         # like Trace::HTTP and client*
         trace_prepare.call(trace, query)
 
-        # TODO: Batch queries
-        trace_report = ApolloTracing::API::FullTracesReport.new(
-          header: ApolloTracing::API::ReportHeader.new(
-            hostname: hostname,
-            uname: uname,
-            agent_version: agent_version,
-            service: service_name,
-            service_version: service_version,
-            schema_tag: schema_tag,
-            schema_hash: schema_hash,
-            runtime_version: RUBY_DESCRIPTION
-          )
-        )
-        trace_report.traces_per_query["# #{query.operation_name || 'unnamed'}\n#{query_signature.call(query)}"] =
-          ApolloTracing::API::Traces.new(trace: [trace])
-
-        puts "Generated Report:\n#{JSON.pretty_generate(JSON.parse(trace_report.to_json))}"
-
-        # TODO: Background this (or use async i/o), handle retries, etc.
-        send_report(trace_report)
+        # TODO: Start dropping traces if the queue is too large
+        @trace_queue << ["# #{query.operation_name || '-'}\n#{query_signature.call(query)}", trace]
       elsif key == 'execute_field'
         # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed when
         # using the interpreter runtime
@@ -99,6 +122,14 @@ module ApolloTracing
 
     private
 
+    def shutting_down?
+      @shutdown_latch.count.zero?
+    end
+
+    def await_shutdown(timeout_secs)
+      @shutdown_latch.wait(timeout_secs)
+    end
+
     def hostname
       @hostname ||= Socket.gethostname
     end
@@ -111,10 +142,46 @@ module ApolloTracing
       @uname ||= `uname -a`
     end
 
+    def to_proto_timestamp(time)
+      Google::Protobuf::Timestamp.new(seconds: time.to_i, nanos: time.nsec)
+    end
+
+    def run_uploader
+      ApolloTracing.logger.info('Apollo trace uploader starting')
+      drain_upload_queue until await_shutdown(reporting_interval)
+      puts 'Stopping uploader run loop'
+      drain_upload_queue
+    ensure
+      ApolloTracing.logger.info('Apollo trace uploader exiting')
+    end
+
+    def drain_upload_queue
+      trace_report = nil
+      report_size = nil
+      until @trace_queue.empty?
+        if trace_report.nil?
+          trace_report = ApolloTracing::API::FullTracesReport.new(header: @report_header)
+          report_size = 0
+        end
+
+        report_key, trace = @trace_queue.pop(false)
+        trace_report.traces_per_query[report_key] ||= ApolloTracing::API::Traces.new
+        trace_report.traces_per_query[report_key].trace << trace
+        # TODO: Add the encoded Trace to the FullTracesReport to avoid encoding twice
+        report_size += trace.class.encode(trace).bytesize + report_key.bytesize
+
+        if report_size >= max_uncompressed_report_size
+          send_report(trace_report)
+          trace_report = nil
+        end
+      end
+
+      send_report(trace_report) if trace_report
+    end
+
     def send_report(report)
-      if api_key.nil?
-        puts 'Apollo API key not set'
-        return
+      if debug_reports?
+        ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(report.to_json))}")
       end
 
       body = compress ? gzip(report.class.encode(report)) : report.class.encode(report)
@@ -123,12 +190,10 @@ module ApolloTracing
         accept_encoding: 'gzip',
         content_encoding: 'gzip'
       }
-      response = RestClient.post(ApolloTracing::API::URL, body, headers)
-      puts response.inspect
+      RestClient.post(ApolloTracing::API::URL, body, headers)
     rescue RestClient::Exception => e
-      puts "Apollo Response: #{e.class}: #{e.message}"
-      puts "Body: #{e.http_body}"
-      raise
+      ApolloTracing.logger.warning("Failed to send trace report: #{e.class}: #{e.message} - #{e.http_body}")
+      # TODO: Add retries with an exponential backoff
     end
 
     def gzip(data)
@@ -138,10 +203,6 @@ module ApolloTracing
       gz.write(data)
       gz.close
       output.string
-    end
-
-    def to_proto_timestamp(time)
-      Google::Protobuf::Timestamp.new(seconds: time.to_i, nanos: time.nsec)
     end
   end
 end

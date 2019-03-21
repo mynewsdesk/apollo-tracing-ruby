@@ -13,4 +13,8 @@ Dir["#{__dir__}/support/**/*.rb"].sort.each { |f| require f }
 
 RSpec.configure do |config|
   config.include JsonSpec::Helpers
+
+  config.after(:suite) do
+    ApolloTracing.shutdown
+  end
 end

@@ -83,5 +83,6 @@ end
 
 class TestSchema < GraphQL::Schema
   query QueryType
-  use ApolloTracing, schema_hash: 'e51485'
+  # TODO: Figure out how to computed schema_hash automatically
+  use ApolloTracing, schema_hash: 'e51485', debug_reports: true
 end
