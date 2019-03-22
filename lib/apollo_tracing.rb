@@ -21,15 +21,15 @@ module ApolloTracing
     # (although it's unlikely you'll have Apollo Tracing enabled in development)
     tracers << tracer
     schema.tracer(tracer)
-    tracer.start_uploader
+    tracer.start_trace_channel
   end
 
-  def synchronize
-    tracers.each(&:synchronize_uploads)
+  def flush
+    tracers.each(&:flush_trace_channel)
   end
 
   def shutdown
-    tracers.each(&:shutdown_uploader)
+    tracers.each(&:shutdown_trace_channel)
   end
 
   trap('SIGINT') do

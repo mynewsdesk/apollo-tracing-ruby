@@ -1,3 +1,7 @@
+# frozen_string_literal: true
+
+require 'concurrent-ruby'
+
 module ApolloTracing
   class ShutdownBarrier
     def initialize
