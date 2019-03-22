@@ -6,6 +6,7 @@ require 'rest-client'
 require 'zlib'
 
 require_relative 'api'
+require_relative 'shutdown_barrier'
 require_relative 'trace_tree'
 
 module ApolloTracing
@@ -43,7 +44,7 @@ module ApolloTracing
         runtime_version: RUBY_DESCRIPTION
       )
 
-      @shutdown_latch = Concurrent::CountDownLatch.new(1)
+      @shutdown_barrier = ApolloTracing::ShutdownBarrier.new
       @trace_queue = Queue.new
     end
 
@@ -55,6 +56,7 @@ module ApolloTracing
 
     def synchronize_uploads
       until @trace_queue.empty?
+        # If the uploader thread isn't running then the queue will never drain
         break unless @uploader_thread && @uploader_thread.alive?
 
         sleep(0.1)
@@ -64,7 +66,7 @@ module ApolloTracing
     def shutdown_uploader
       return unless @uploader_thread
 
-      @shutdown_latch.count_down
+      @shutdown_barrier.shutdown
       @uploader_thread.join
     end
 
@@ -122,14 +124,6 @@ module ApolloTracing
 
     private
 
-    def shutting_down?
-      @shutdown_latch.count.zero?
-    end
-
-    def await_shutdown(timeout_secs)
-      @shutdown_latch.wait(timeout_secs)
-    end
-
     def hostname
       @hostname ||= Socket.gethostname
     end
@@ -148,7 +142,7 @@ module ApolloTracing
 
     def run_uploader
       ApolloTracing.logger.info('Apollo trace uploader starting')
-      drain_upload_queue until await_shutdown(reporting_interval)
+      drain_upload_queue until @shutdown_barrier.await_shutdown(reporting_interval)
       puts 'Stopping uploader run loop'
       drain_upload_queue
     ensure

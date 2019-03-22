@@ -2,34 +2,43 @@
 
 require 'graphql'
 require 'logger'
-require 'apollo_tracing/tracer'
+
 require 'apollo_tracing/schema_digester'
+require 'apollo_tracing/tracer'
 require 'apollo_tracing/version'
 
 module ApolloTracing
-  class << self
-    attr_accessor :logger
-  end
+  extend self
+
+  attr_accessor :logger
 
   # TODO: Initialize this to Rails.logger in a Railtie
   self.logger = Logger.new(STDOUT)
 
-  def self.use(schema, **options)
-    @tracer = ApolloTracing::Tracer.new(**options)
-    schema.tracer(@tracer)
-
-    trap('SIGINT') do
-      Thread.new { shutdown }
-    end
-
-    @tracer.start_uploader
+  def use(schema, **options)
+    tracer = ApolloTracing::Tracer.new(**options)
+    # TODO: Shutdown tracers when reloading code in Rails
+    # (although it's unlikely you'll have Apollo Tracing enabled in development)
+    tracers << tracer
+    schema.tracer(tracer)
+    tracer.start_uploader
   end
 
-  def self.synchronize
-    @tracer.synchronize_uploads if @tracer
+  def synchronize
+    tracers.each(&:synchronize_uploads)
   end
 
-  def self.shutdown
-    @tracer.shutdown_uploader if @tracer
+  def shutdown
+    tracers.each(&:shutdown_uploader)
+  end
+
+  trap('SIGINT') do
+    Thread.new { shutdown }
+  end
+
+  private
+
+  def tracers
+    @tracers ||= []
   end
 end
