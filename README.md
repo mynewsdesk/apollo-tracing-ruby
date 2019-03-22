@@ -175,6 +175,10 @@ Integration Testing Notes (we shouldn't actually do this when the gem becomes re
 1. Upload the test schema to Apollo by running `apollo service:push --localSchemaFile=tmp/test.graphql`
 1. Run the one test `rspec`
 
+Regenerating Protocol Buffer Stubs:
+1. Install [protoc](https://developers.google.com/protocol-buffers/).
+2. Run `./bin/generate-client.sh`
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/uniiverse/apollo-tracing-ruby. 

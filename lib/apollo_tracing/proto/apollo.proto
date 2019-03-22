@@ -1,5 +1,3 @@
-// Downloaded from https://raw.githubusercontent.com/apollographql/apollo-server/master/packages/apollo-engine-reporting-protobuf/src/reports.proto
-
 syntax = "proto3";
 
 package mdg.engine.proto;

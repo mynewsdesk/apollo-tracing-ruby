@@ -7,27 +7,48 @@ require_relative 'shutdown_barrier'
 module ApolloTracing
   class TraceChannel
     attr_reader :compress, :api_key, :reporting_interval, :max_uncompressed_report_size, :debug_reports,
-                :max_upload_attempts, :min_upload_retry_delay_secs
+                :max_upload_attempts, :min_upload_retry_delay_secs, :max_queue_bytes
     alias_method :debug_reports?, :debug_reports
 
     def initialize(report_header:, compress: nil, api_key: nil, reporting_interval: nil,
-                   max_uncompressed_report_size: nil, debug_reports: nil, max_upload_attempts: nil,
-                   min_upload_retry_delay_secs: nil)
+                   max_uncompressed_report_size: nil, max_queue_bytes: nil, debug_reports: nil,
+                   max_upload_attempts: nil, min_upload_retry_delay_secs: nil)
       @report_header = report_header
       @compress = compress.nil? ? true : compress
       @api_key = api_key || ENV.fetch('ENGINE_API_KEY')
       @reporting_interval = reporting_interval || 5
       @max_uncompressed_report_size = max_uncompressed_report_size || 4 * 1024 * 1024
+      @max_queue_bytes = max_queue_bytes || @max_uncompressed_report_size * 10
       @max_upload_attempts = max_upload_attempts || 5
       @min_upload_retry_delay_secs = min_upload_retry_delay_secs || 0.1
       @debug_reports = debug_reports.nil? ? false : debug_reports
       @queue = Queue.new
+      @queue_bytes = Concurrent::AtomicFixnum.new(0)
+      @queue_full = false
+      @enqueue_mutex = Mutex.new
       @shutdown_barrier = ApolloTracing::ShutdownBarrier.new
     end
 
     def queue(query_key, trace)
-      # TODO: Start dropping traces if the queue is too large
-      @queue << [query_key, trace]
+      @enqueue_mutex.synchronize do
+        if @queue_bytes.value >= max_queue_bytes
+          unless @queue_full
+            ApolloTracing.logger.warn("Apollo tracing queue is above the threshold of #{max_queue_bytes} bytes and " \
+              'trace collection will be paused.')
+            @queue_full = true
+          end
+        else
+          if @queue_full
+            ApolloTracing.logger.info("Apollo tracing queue is below the threshold of #{max_queue_bytes} bytes and " \
+              'trace collection will resume.')
+            @queue_full = false
+          end
+
+          encoded_trace = ApolloTracing::Proto::Trace.encode(trace)
+          @queue << [query_key, encoded_trace]
+          @queue_bytes.increment(encoded_trace.bytesize + query_key.bytesize)
+        end
+      end
     end
 
     def start
@@ -54,6 +75,10 @@ module ApolloTracing
 
     private
 
+    def queue_full?
+      @queue_bytes.value >= max_queue_bytes
+    end
+
     def run_uploader
       ApolloTracing.logger.info('Apollo trace uploader starting')
       drain_queue until @shutdown_barrier.await_shutdown(reporting_interval)
@@ -64,36 +89,42 @@ module ApolloTracing
     end
 
     def drain_queue
-      trace_report = nil
-      report_size = nil
+      traces_per_query = {}
+      report_size = 0
       until @queue.empty?
-        if trace_report.nil?
-          trace_report = ApolloTracing::Proto::FullTracesReport.new(header: @report_header)
+        query_key, encoded_trace = @queue.pop(false)
+        @queue_bytes.decrement(encoded_trace.bytesize + query_key.bytesize)
+
+        traces_per_query[query_key] ||= []
+        traces_per_query[query_key] << encoded_trace
+        report_size += encoded_trace.bytesize + query_key.bytesize
+
+        if report_size >= max_uncompressed_report_size # rubocop:disable Style/Next
+          send_report(traces_per_query)
+          traces_per_query = {}
           report_size = 0
-        end
-
-        report_key, trace = @queue.pop(false)
-        trace_report.traces_per_query[report_key] ||= ApolloTracing::Proto::Traces.new
-        trace_report.traces_per_query[report_key].trace << trace
-        # TODO: Add the encoded Trace to the FullTracesReport to avoid encoding twice
-        report_size += trace.class.encode(trace).bytesize + report_key.bytesize
-
-        if report_size >= max_uncompressed_report_size
-          send_report(trace_report)
-          trace_report = nil
         end
       end
 
-      send_report(trace_report) if trace_report
+      send_report(traces_per_query) unless traces_per_query.empty?
     end
 
-    def send_report(report)
+    def send_report(traces_per_query)
+      trace_report = ApolloTracing::Proto::FullTracesReport.new(header: @report_header)
+      traces_per_query.each do |query_key, encoded_traces|
+        trace_report.traces_per_query[query_key] = ApolloTracing::Proto::Traces.new(
+          # TODO: Figure out how to use the already encoded traces like Apollo
+          # https://github.com/apollographql/apollo-server/blob/master/packages/apollo-engine-reporting-protobuf/src/index.js
+          trace: encoded_traces.map { |encoded_trace| ApolloTracing::Proto::Trace.decode(encoded_trace) }
+        )
+      end
+
       if debug_reports?
-        ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(report.to_json))}")
+        ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(trace_report.to_json))}")
       end
 
       ApolloTracing::API.upload(
-        report,
+        ApolloTracing::Proto::FullTracesReport.encode(trace_report),
         api_key: api_key,
         compress: compress,
         max_attempts: max_upload_attempts,

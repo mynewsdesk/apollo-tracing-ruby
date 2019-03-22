@@ -14,9 +14,9 @@ module ApolloTracing
     UploadAttemptError = Class.new(StandardError)
     RetryableUploadAttemptError = Class.new(UploadAttemptError)
 
-    def upload(report, max_attempts:, min_retry_delay_secs:, **options)
+    def upload(report_data, max_attempts:, min_retry_delay_secs:, **options)
       attempt ||= 0
-      attempt_upload(report, **options)
+      attempt_upload(report_data, **options)
     rescue UploadAttemptError => e
       attempt += 1
       if e.is_a?(RetryableUploadAttemptError) && attempt < max_attempts
@@ -32,8 +32,8 @@ module ApolloTracing
 
     private
 
-    def attempt_upload(report, compress:, api_key:)
-      body = compress ? gzip(report.class.encode(report)) : report.class.encode(report)
+    def attempt_upload(report_data, compress:, api_key:)
+      body = compress ? gzip(report_data) : report_data
       headers = { 'X-Api-Key' => api_key }
       headers['Content-Encoding'] = 'gzip' if compress
       result = Net::HTTP.post(APOLLO_URI, body, headers)
