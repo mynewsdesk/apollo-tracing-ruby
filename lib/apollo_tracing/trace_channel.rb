@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rest-client'
-require 'zlib'
-
+require_relative 'api'
 require_relative 'shutdown_barrier'
 
 module ApolloTracing
@@ -89,25 +87,7 @@ module ApolloTracing
         ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(report.to_json))}")
       end
 
-      body = compress ? gzip(report.class.encode(report)) : report.class.encode(report)
-      headers = {
-        'X-Api-Key' => api_key,
-        accept_encoding: 'gzip',
-        content_encoding: 'gzip'
-      }
-      RestClient.post(ApolloTracing::API::URL, body, headers)
-    rescue RestClient::Exception => e
-      ApolloTracing.logger.warning("Failed to send trace report: #{e.class}: #{e.message} - #{e.http_body}")
-      # TODO: Add retries with an exponential backoff
-    end
-
-    def gzip(data)
-      output = StringIO.new
-      output.set_encoding('BINARY')
-      gz = Zlib::GzipWriter.new(output)
-      gz.write(data)
-      gz.close
-      output.string
+      ApolloTracing::API.upload(report, api_key: api_key, compress: compress)
     end
   end
 end
