@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative 'api'
+require_relative 'proto'
 require_relative 'trace_channel'
 require_relative 'trace_tree'
 
@@ -8,16 +8,15 @@ module ApolloTracing
   class Tracer
     attr_reader :trace_prepare, :query_signature
 
-    def initialize(compress: nil, api_key: nil, schema_tag: nil, schema_hash: nil,
-                   service_version: nil, trace_prepare: nil, query_signature: nil,
-                   reporting_interval: nil, max_uncompressed_report_size: nil, debug_reports: nil)
+    def initialize(schema_tag: nil, schema_hash: nil, service_version: nil, trace_prepare: nil, query_signature: nil,
+                   api_key: nil, **trace_channel_options)
       @trace_prepare = trace_prepare || Proc.new {}
       @query_signature = query_signature || Proc.new do |query|
         # TODO: This should be smarter
         query.query_string
       end
 
-      report_header = ApolloTracing::API::ReportHeader.new(
+      report_header = ApolloTracing::Proto::ReportHeader.new(
         hostname: hostname,
         uname: uname,
         agent_version: agent_version,
@@ -27,14 +26,8 @@ module ApolloTracing
         schema_hash: schema_hash,
         runtime_version: RUBY_DESCRIPTION
       )
-      @trace_channel = ApolloTracing::TraceChannel.new(
-        compress: compress,
-        api_key: api_key,
-        reporting_interval: reporting_interval,
-        max_uncompressed_report_size: max_uncompressed_report_size,
-        debug_reports: debug_reports,
-        report_header: report_header
-      )
+      @trace_channel = ApolloTracing::TraceChannel.new(report_header: report_header, api_key: api_key,
+                                                       **trace_channel_options)
     end
 
     def start_trace_channel
@@ -54,7 +47,7 @@ module ApolloTracing
 
       if key == 'execute_query'
         query = data.fetch(:query)
-        trace = ApolloTracing::API::Trace.new(start_time: to_proto_timestamp(Time.now.utc))
+        trace = ApolloTracing::Proto::Trace.new(start_time: to_proto_timestamp(Time.now.utc))
         start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
         trace_tree = ApolloTracing::TraceTree.new
 

@@ -10,7 +10,7 @@ module ApolloTracing
 
     def initialize
       @nodes = {
-        ROOT_PATH => ApolloTracing::API::Trace::Node.new
+        ROOT_PATH => ApolloTracing::Proto::Trace::Node.new
       }
     end
 
@@ -19,7 +19,7 @@ module ApolloTracing
     end
 
     def add(path:, field:, parent_type:, start_time_offset:, end_time_offset:)
-      node = ApolloTracing::API::Trace::Node.new(
+      node = ApolloTracing::Proto::Trace::Node.new(
         field_name: field.graphql_name,
         type: field.type.to_s,
         parent_type: parent_type.graphql_name,

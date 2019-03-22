@@ -1,20 +1,25 @@
 # frozen_string_literal: true
 
 require_relative 'api'
+require_relative 'proto'
 require_relative 'shutdown_barrier'
 
 module ApolloTracing
   class TraceChannel
-    attr_reader :compress, :api_key, :reporting_interval, :max_uncompressed_report_size, :debug_reports
+    attr_reader :compress, :api_key, :reporting_interval, :max_uncompressed_report_size, :debug_reports,
+                :max_upload_attempts, :min_upload_retry_delay_secs
     alias_method :debug_reports?, :debug_reports
 
     def initialize(report_header:, compress: nil, api_key: nil, reporting_interval: nil,
-                   max_uncompressed_report_size: nil, debug_reports: nil)
+                   max_uncompressed_report_size: nil, debug_reports: nil, max_upload_attempts: nil,
+                   min_upload_retry_delay_secs: nil)
       @report_header = report_header
       @compress = compress.nil? ? true : compress
       @api_key = api_key || ENV.fetch('ENGINE_API_KEY')
       @reporting_interval = reporting_interval || 5
       @max_uncompressed_report_size = max_uncompressed_report_size || 4 * 1024 * 1024
+      @max_upload_attempts = max_upload_attempts || 5
+      @min_upload_retry_delay_secs = min_upload_retry_delay_secs || 0.1
       @debug_reports = debug_reports.nil? ? false : debug_reports
       @queue = Queue.new
       @shutdown_barrier = ApolloTracing::ShutdownBarrier.new
@@ -63,12 +68,12 @@ module ApolloTracing
       report_size = nil
       until @queue.empty?
         if trace_report.nil?
-          trace_report = ApolloTracing::API::FullTracesReport.new(header: @report_header)
+          trace_report = ApolloTracing::Proto::FullTracesReport.new(header: @report_header)
           report_size = 0
         end
 
         report_key, trace = @queue.pop(false)
-        trace_report.traces_per_query[report_key] ||= ApolloTracing::API::Traces.new
+        trace_report.traces_per_query[report_key] ||= ApolloTracing::Proto::Traces.new
         trace_report.traces_per_query[report_key].trace << trace
         # TODO: Add the encoded Trace to the FullTracesReport to avoid encoding twice
         report_size += trace.class.encode(trace).bytesize + report_key.bytesize
@@ -87,7 +92,13 @@ module ApolloTracing
         ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(report.to_json))}")
       end
 
-      ApolloTracing::API.upload(report, api_key: api_key, compress: compress)
+      ApolloTracing::API.upload(
+        report,
+        api_key: api_key,
+        compress: compress,
+        max_attempts: max_upload_attempts,
+        min_retry_delay_secs: min_upload_retry_delay_secs
+      )
     end
   end
 end
