@@ -15,16 +15,20 @@ module ApolloTracing
     end
 
     def root
-      @nodes.fetch(ROOT_PATH)
+      node(ROOT_PATH)
     end
 
-    def add(path:, field:, parent_type:, start_time_offset:, end_time_offset:)
+    def node(path)
+      @nodes.fetch(path)
+    end
+
+    def add(path:, field:, parent_type:, start_time:, end_time:)
       node = ApolloTracing::Proto::Trace::Node.new(
         field_name: field.graphql_name,
         type: field.type.to_s,
         parent_type: parent_type.graphql_name,
-        start_time: start_time_offset,
-        end_time: end_time_offset
+        start_time: start_time,
+        end_time: end_time
       )
 
       @nodes[path] = node

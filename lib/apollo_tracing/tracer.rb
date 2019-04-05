@@ -43,11 +43,11 @@ module ApolloTracing
     end
 
     def trace(key, data)
-      # TODO: Handle lazy field resolution
-
-      if key == 'execute_query'
+      case key
+      when 'execute_query'
         query = data.fetch(:query)
-        trace = ApolloTracing::Proto::Trace.new(start_time: to_proto_timestamp(Time.now.utc))
+        trace = ApolloTracing::Proto::Trace.new(start_time: to_proto_timestamp(Time.now.utc),
+                                                details: ApolloTracing::Proto::Trace::Details.new)
         start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
         trace_tree = ApolloTracing::TraceTree.new
 
@@ -70,7 +70,7 @@ module ApolloTracing
         trace_prepare.call(trace, query)
 
         @trace_channel.queue("# #{query.operation_name || '-'}\n#{query_signature.call(query)}", trace)
-      elsif key == 'execute_field'
+      when 'execute_field'
         # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed when
         # using the interpreter runtime
         start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
@@ -83,9 +83,19 @@ module ApolloTracing
           path: context.path,
           parent_type: context.parent_type,
           field: context.field,
-          start_time_offset: start_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos),
-          end_time_offset: end_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos)
+          start_time: start_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos),
+          end_time: end_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos)
         )
+      when 'execute_field_lazy'
+        result = yield
+        end_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
+
+        # Update the end time of the lazy field
+        context = data.fetch(:context)
+        trace = context.fetch(:apollo_tracing).fetch(:tree).node(context.path)
+        trace.end_time = end_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos)
+
+        # TODO: Handle errors
       else
         result = yield
       end
