@@ -3,7 +3,6 @@
 require 'graphql'
 require 'logger'
 
-require 'apollo_tracing/schema_digester'
 require 'apollo_tracing/tracer'
 require 'apollo_tracing/version'
 
