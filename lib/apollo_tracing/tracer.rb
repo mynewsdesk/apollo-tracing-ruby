@@ -6,6 +6,11 @@ require_relative 'trace_tree'
 
 module ApolloTracing
   class Tracer
+    EXECUTE_QUERY_KEY = 'execute_query'
+    SYNC_LAZY_QUERY_RESULT_KEY = 'execute_query_lazy'
+    EXECUTE_FIELD_KEY = 'execute_field'
+    SYNC_LAZY_FIELD_RESULT_KEY = 'execute_field_lazy'
+
     attr_reader :trace_prepare, :query_signature
 
     def initialize(schema_tag: nil, schema_hash: nil, service_version: nil, trace_prepare: nil, query_signature: nil,
@@ -44,24 +49,27 @@ module ApolloTracing
 
     def trace(key, data)
       case key
-      when 'execute_query'
+      when EXECUTE_QUERY_KEY
         query = data.fetch(:query)
-        trace = ApolloTracing::Proto::Trace.new(start_time: to_proto_timestamp(Time.now.utc),
-                                                details: ApolloTracing::Proto::Trace::Details.new)
-        start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
-        trace_tree = ApolloTracing::TraceTree.new
+        query.context.namespace(self.class).merge!(
+          start_time: Time.now.utc,
+          start_time_nanos: Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond),
+          tree: ApolloTracing::TraceTree.new
+        )
 
-        query.context[:apollo_tracing] = {
-          trace_start_time_nanos: start_time_nanos,
-          tree: trace_tree
-        }
-
+        result = yield
+      when SYNC_LAZY_QUERY_RESULT_KEY
+        # Note all query results are synced even if they're not lazy
         result = yield
 
         end_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
-        trace.duration_ns = end_time_nanos - start_time_nanos
+
+        query = data.fetch(:query)
+        trace = ApolloTracing::Proto::Trace.new(details: ApolloTracing::Proto::Trace::Details.new)
+        trace.start_time = to_proto_timestamp(query.context.namespace(self.class).fetch(:start_time))
+        trace.duration_ns = end_time_nanos - query.context.namespace(self.class).fetch(:start_time_nanos)
         trace.end_time = to_proto_timestamp(Time.now.utc)
-        trace.root = trace_tree.root
+        trace.root = query.context.namespace(self.class).fetch(:tree).root
 
         # TODO: Fill out Trace::Details? Requires removing sensitive data
 
@@ -70,7 +78,7 @@ module ApolloTracing
         trace_prepare.call(trace, query)
 
         @trace_channel.queue("# #{query.operation_name || '-'}\n#{query_signature.call(query)}", trace)
-      when 'execute_field'
+      when EXECUTE_FIELD_KEY
         # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed when
         # using the interpreter runtime
         start_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
@@ -78,22 +86,46 @@ module ApolloTracing
         end_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
 
         # TODO: Handle errors
-        context = data.fetch(:context)
-        context.fetch(:apollo_tracing).fetch(:tree).add(
-          path: context.path,
-          parent_type: context.parent_type,
-          field: context.field,
-          start_time: start_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos),
-          end_time: end_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos)
+
+        if data.include?(:context)
+          context = data.fetch(:context)
+          field_name = context.field.graphql_name
+          field_type = context.field.type.to_s
+          parent_name = context.parent_type.graphql_name
+          path = context.path
+        else
+          context = data.fetch(:query).context
+          field_name = data.fetch(:field).graphql_name
+          field_type = data.fetch(:field).type.unwrap.graphql_name
+          parent_name = data.fetch(:owner).graphql_name
+          path = data.fetch(:path)
+        end
+
+        context.namespace(self.class).fetch(:tree).add(
+          path: path,
+          parent_type: parent_name,
+          field_name: field_name,
+          field_type: field_type,
+          start_time: start_time_nanos - context.namespace(self.class).fetch(:start_time_nanos),
+          end_time: end_time_nanos - context.namespace(self.class).fetch(:start_time_nanos)
         )
-      when 'execute_field_lazy'
+      when SYNC_LAZY_FIELD_RESULT_KEY
+        # Note only lazy field results are synced
+
         result = yield
         end_time_nanos = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
 
         # Update the end time of the lazy field
-        context = data.fetch(:context)
-        trace = context.fetch(:apollo_tracing).fetch(:tree).node(context.path)
-        trace.end_time = end_time_nanos - context.dig(:apollo_tracing, :trace_start_time_nanos)
+        if data.include?(:context)
+          context = data.fetch(:context)
+          path = context.path
+        else
+          context = data.fetch(:query).context
+          path = data.fetch(:path)
+        end
+
+        trace = context.namespace(self.class).fetch(:tree).node(path)
+        trace.end_time = end_time_nanos - context.namespace(self.class).fetch(:start_time_nanos)
 
         # TODO: Handle errors
       else

@@ -22,11 +22,11 @@ module ApolloTracing
       @nodes.fetch(path)
     end
 
-    def add(path:, field:, parent_type:, start_time:, end_time:)
+    def add(path:, field_name:, field_type:, parent_type:, start_time:, end_time:)
       node = ApolloTracing::Proto::Trace::Node.new(
-        field_name: field.graphql_name,
-        type: field.type.to_s,
-        parent_type: parent_type.graphql_name,
+        field_name: field_name,
+        type: field_type,
+        parent_type: parent_type,
         start_time: start_time,
         end_time: end_time
       )
