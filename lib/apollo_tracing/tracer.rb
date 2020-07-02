@@ -35,18 +35,6 @@ module ApolloTracing
                                                        **trace_channel_options)
     end
 
-    def start_trace_channel
-      @trace_channel.start
-    end
-
-    def shutdown_trace_channel
-      @trace_channel.shutdown
-    end
-
-    def flush_trace_channel
-      @trace_channel.flush
-    end
-
     def trace(key, data)
       case key
       when EXECUTE_QUERY_KEY
@@ -77,7 +65,7 @@ module ApolloTracing
         # like Trace::HTTP and client*
         trace_prepare.call(trace, query)
 
-        @trace_channel.queue("# #{query.operation_name || '-'}\n#{query_signature.call(query)}", trace)
+        @trace_channel.send("# #{query.operation_name || '-'}\n#{query_signature.call(query)}", trace)
       when EXECUTE_FIELD_KEY
         # TODO: See https://graphql-ruby.org/api-doc/1.9.3/GraphQL/Tracing. Different args are passed when
         # using the interpreter runtime
