@@ -56,15 +56,16 @@ module ApolloTracing
           @queue << [query_key, encoded_trace]
           @queue_bytes.increment(encoded_trace.bytesize + query_key.bytesize)
           ApolloTracing.logger.info("Apollo Adding to que 6 #{@queue.empty?} ")
+          drain_queue
         end
       end
     end
 
     def start
       ApolloTracing.logger.info("Apollo start! ")
-      @uploader_thread = Thread.new do
-        run_uploader
-      end
+      # @uploader_thread = Thread.new do
+      #   run_uploader
+      # end
     end
 
     def flush
