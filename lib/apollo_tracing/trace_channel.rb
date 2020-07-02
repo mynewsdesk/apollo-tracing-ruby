@@ -61,6 +61,7 @@ module ApolloTracing
     end
 
     def start
+      ApolloTracing.logger.info("Apollo start! ")
       @uploader_thread = Thread.new do
         run_uploader
       end
