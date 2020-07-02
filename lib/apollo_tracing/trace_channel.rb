@@ -30,22 +30,27 @@ module ApolloTracing
     end
 
     def queue(query_key, trace)
-      ApolloTracing.logger.info("Adding to que: #{query_key}")
+      ApolloTracing.logger.info("Apollo Adding to que: #{query_key}")
       @enqueue_mutex.synchronize do
-        ApolloTracing.logger.info("Adding to que - synchronized")
+        ApolloTracing.logger.info("Apollo Adding to que - synchronized")
         if @queue_bytes.value >= max_queue_bytes
+          ApolloTracing.logger.info("Apollo Adding to que 1 ")
           unless @queue_full
+            ApolloTracing.logger.info("Apollo Adding to que 2 ")
             ApolloTracing.logger.warn("Apollo tracing queue is above the threshold of #{max_queue_bytes} bytes and " \
               'trace collection will be paused.')
             @queue_full = true
           end
         else
+          ApolloTracing.logger.info("Apollo Adding to que 3 ")
           if @queue_full
+            ApolloTracing.logger.info("Apollo Adding to que 4 ")
             ApolloTracing.logger.info("Apollo tracing queue is below the threshold of #{max_queue_bytes} bytes and " \
               'trace collection will resume.')
             @queue_full = false
           end
 
+          ApolloTracing.logger.info("Apollo Adding to que 5 ")
           encoded_trace = ApolloTracing::Proto::Trace.encode(trace)
           @queue << [query_key, encoded_trace]
           @queue_bytes.increment(encoded_trace.bytesize + query_key.bytesize)
@@ -60,15 +65,22 @@ module ApolloTracing
     end
 
     def flush
+      ApolloTracing.logger.info("Apollo flush 1 ")
       until @queue.empty?
+        ApolloTracing.logger.info("Apollo flush 2 ")
         # If the uploader thread isn't running then the queue will never drain
         break unless @uploader_thread && @uploader_thread.alive?
 
+        ApolloTracing.logger.info("Apollo flush 3 ")
+
         sleep(0.1)
+
+        ApolloTracing.logger.info("Apollo flush 4 ")
       end
     end
 
     def shutdown
+      ApolloTracing.logger.info("Apollo shutdown ")
       return unless @uploader_thread
 
       @shutdown_barrier.shutdown
@@ -85,15 +97,18 @@ module ApolloTracing
       ApolloTracing.logger.info('Apollo trace uploader starting')
       drain_queue until @shutdown_barrier.await_shutdown(reporting_interval)
       puts 'Stopping uploader run loop'
+      ApolloTracing.logger.info('Apollo trace - Stopping uploader run loop')
       drain_queue
     ensure
       ApolloTracing.logger.info('Apollo trace uploader exiting')
     end
 
     def drain_queue
+      ApolloTracing.logger.info('Apollo drain_queue 1')
       traces_per_query = {}
       report_size = 0
       until @queue.empty?
+        ApolloTracing.logger.info('Apollo drain_queue 2')
         query_key, encoded_trace = @queue.pop(false)
         @queue_bytes.decrement(encoded_trace.bytesize + query_key.bytesize)
 
@@ -102,6 +117,7 @@ module ApolloTracing
         report_size += encoded_trace.bytesize + query_key.bytesize
 
         if report_size >= max_uncompressed_report_size # rubocop:disable Style/Next
+          ApolloTracing.logger.info('Apollo drain_queue 2')
           send_report(traces_per_query)
           traces_per_query = {}
           report_size = 0
@@ -112,6 +128,7 @@ module ApolloTracing
     end
 
     def send_report(traces_per_query)
+      ApolloTracing.logger.info('Apollo send_report 1')
       trace_report = ApolloTracing::Proto::FullTracesReport.new(header: @report_header)
       traces_per_query.each do |query_key, encoded_traces|
         trace_report.traces_per_query[query_key] = ApolloTracing::Proto::Traces.new(
@@ -121,6 +138,7 @@ module ApolloTracing
         )
       end
 
+      
       if debug_reports?
         ApolloTracing.logger.info("Sending trace report:\n#{JSON.pretty_generate(JSON.parse(trace_report.to_json))}")
       end
