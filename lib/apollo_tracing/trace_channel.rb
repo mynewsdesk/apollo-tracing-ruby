@@ -32,6 +32,7 @@ module ApolloTracing
     def queue(query_key, trace)
       ApolloTracing.logger.info("Adding to que: #{query_key}")
       @enqueue_mutex.synchronize do
+        ApolloTracing.logger.info("Adding to que - synchronized")
         if @queue_bytes.value >= max_queue_bytes
           unless @queue_full
             ApolloTracing.logger.warn("Apollo tracing queue is above the threshold of #{max_queue_bytes} bytes and " \
