@@ -55,7 +55,7 @@ module ApolloTracing
           ApolloTracing.logger.info("Apollo Adding to que 5 & a half")
           @queue << [query_key, encoded_trace]
           @queue_bytes.increment(encoded_trace.bytesize + query_key.bytesize)
-          ApolloTracing.logger.info("Apollo Adding to que 6 #{@queue.count} ")
+          ApolloTracing.logger.info("Apollo Adding to que 6 #{@queue.empty?} ")
         end
       end
     end
